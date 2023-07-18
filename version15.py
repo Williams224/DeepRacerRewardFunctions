@@ -1,4 +1,5 @@
 import math
+from math import e, sqrt, pi
 
 outer_track = {
     0,
@@ -67,58 +68,30 @@ inner_track = {
 middle_track = {44, 45, 46, 47, 60, 61, 62, 63, 64, 65, 66}
 
 
-def get_path_reward(
-    next_waypoint,
-    outer_track_waypoints,
-    middle_track_waypoints,
-    inner_track_waypoints,
-    track_width,
-    distance_from_center,
+def gaussian(x, m, s):
+    gauss = 1 / (sqrt(2 * pi) * s) * e ** (-0.5 * (float(x - m) / s) ** 2)
+    return gauss
+
+
+def get_path_reward_two(
+    nearest_way_point,
+    out_points,
+    center_points,
+    in_points,
     is_left_of_center,
+    distance_from_center_w,
 ):
-    if next_waypoint in middle_track_waypoints:
-        marker_1 = 0.1 * track_width
-        marker_2 = 0.25 * track_width
-        marker_3 = 0.5 * track_width
-
-        # Give higher reward if the car is closer to center line and vice versa
-        if distance_from_center <= marker_1:
-            return 2.0
-        elif distance_from_center <= marker_2:
-            return 0.5
-        elif distance_from_center <= marker_3:
-            return 0.1
-        else:
-            return 1e-3
-    elif next_waypoint in outer_track_waypoints:
-        marker_1 = 0.33 * track_width
-        marker_2 = 0.25 * track_width
-        marker_3 = 0.1 * track_width
-
-        if distance_from_center > marker_1 and not is_left_of_center:
-            return 2.0
-        elif distance_from_center > marker_2 and not is_left_of_center:
-            return 1.0
-        elif distance_from_center > marker_3 and not is_left_of_center:
-            return 0.5
-        else:
-            return 1e-3
-
-    elif next_waypoint in inner_track_waypoints or next_waypoint > 70:
-        marker_1 = 0.33 * track_width
-        marker_2 = 0.25 * track_width
-        marker_3 = 0.1 * track_width
-        if distance_from_center > marker_1 and is_left_of_center:
-            return 2.0
-        elif distance_from_center > marker_2 and is_left_of_center:
-            return 1.0
-        elif distance_from_center > marker_3 and is_left_of_center:
-            return 0.5
-        else:
-            return 1e-3
-
+    if is_left_of_center:
+        distance_from_center_unabs = distance_from_center_w * -1
     else:
-        raise ValueError("crap")
+        distance_from_center_unabs = distance_from_center_w
+
+    if nearest_way_point in center_points:
+        return gaussian(distance_from_center_unabs, 0.0, 0.15) * 0.75
+    elif nearest_way_point in out_points:
+        return gaussian(distance_from_center_unabs, 0.2, 0.15) * 0.75
+    elif nearest_way_point in in_points or nearest_way_point > 70:
+        return gaussian(distance_from_center_unabs, -0.2, 0.15) * 0.75
 
 
 class PARAMS:
@@ -152,13 +125,13 @@ def reward_function(params):
     # if speed < 2.9 and next_waypoint_i < 18:
     # return float(1e-3)
 
-    path_reward = get_path_reward(
+    distance_from_center_w = params["distance_from_center"] / params["track_width"]
+    path_reward = get_path_reward_two(
         next_waypoint_i,
         outer_track,
         middle_track,
         inner_track,
-        params["track_width"],
-        params["distance_from_center"],
+        distance_from_center_w,
         params["is_left_of_center"],
     )
 
@@ -171,19 +144,9 @@ def reward_function(params):
     if direction_diff > 180:
         direction_diff = 360 - direction_diff
 
-    if direction_diff < 10.0:
-        heading_reward = 2.0
-    elif direction_diff > 10.0 and direction_diff <= 30.0:
-        heading_reward = 1.0
-    else:
-        heading_reward = 1e-3
+    heading_reward = gaussian(direction_diff, 0.0, 10.0) * 50.0
 
-    if abs_steering_angle < 5.0:
-        steering_reward = 2.0
-    elif abs_steering_angle < 15.0:
-        steering_reward = 1.0
-    else:
-        steering_reward = 0.5
+    steering_reward = gaussian(abs_steering_angle, 0.0, 20.0) * 100.0
 
     steering_penalty = 0.0
     if PARAMS.prev_steering_angle is not None:
@@ -197,7 +160,7 @@ def reward_function(params):
     if params["progress"] % 10 == 0 and params["progress"] >= 10:
         progress_reward = int(params["progress"] / 10) * 10
 
-    speed_reward = (params["speed"] ** 2) / 8.0
+    speed_reward = gaussian(speed, 4.0, 1.75) * 8.75
 
     PARAMS.prev_speed = params["speed"]
     PARAMS.prev_steering_angle = params["steering_angle"]
@@ -209,7 +172,7 @@ def reward_function(params):
     speed_weight = 0.25
     # slowdown_weight = 0.25
     steering_change_weight = 0.25
-    progress_weight = 0.75
+    progress_weight = 0.25
 
     total_reward = (
         path_weight * path_reward
